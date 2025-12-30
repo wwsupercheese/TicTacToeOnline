@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  # 1. Сервис Consul
+  consul:
+    image: hashicorp/consul:latest
+    container_name: consul_node
+    ports:
+      - "8500:8500"
+    command: "agent -dev -client=0.0.0.0"
+
+  # 2. База данных PostgreSQL
+  tictactoe-db:
+    image: postgres:latest
+    container_name: tictactoe-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: mysecretpassword
+      POSTGRES_DB: tictactoe
+    ports:
+      - "5433:5432"
+
+  # 3. ORM Сервис
+  orm:
+    build:
+      context: .
+      dockerfile: TicTacToeOnlineORM/Dockerfile
+    container_name: tictactoe-orm
+    environment:
+      - ConsulAddress=http://consul:8500
+      - ConnectionStrings__DefaultConnection=Host=tictactoe-db;Username=postgres;Password=mysecretpassword;Database=tictactoe
+    depends_on:
+      - consul
+      - tictactoe-db
+    ports:
+      - "5132:5132"
+
+  # 4. Игровой Сервер
+  game-server:
+    build:
+      context: .
+      dockerfile: TicTacToeOnlineServer/Dockerfile
+    container_name: tictactoe-server
+    environment:
+      - ConsulAddress=http://consul:8500
+    depends_on:
+      - consul
+      - orm
+    ports:
+      - "5001:5001"
