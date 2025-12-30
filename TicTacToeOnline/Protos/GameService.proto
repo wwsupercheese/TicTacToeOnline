@@ -22,6 +22,7 @@ message CheckResponse {
 
 message CreateRequest {
     string playerId = 1; // Формат "Nickname|RoomID"
+    bool is_join_only = 2; // Если true, сервер не будет создавать новую комнату
 }
 
 message StateRequest {
@@ -56,6 +57,6 @@ message GameResponse {
     int32 activeBoardX = 6;      
     int32 activeBoardY = 7;
     string error = 8;
-    string playerX = 9;  // Добавлено поле
-    string playerO = 10; // Добавлено поле
+    string playerX = 9;  
+    string playerO = 10; 
 }

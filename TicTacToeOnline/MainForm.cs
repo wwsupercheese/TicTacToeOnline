@@ -102,7 +102,6 @@ namespace TicTacToeOnline
 
         private void HandleException(Exception ex)
         {
-            // Если сервер сообщил, что он еще не нашел ORM (SYSTEM_SYNCING)
             if (ex is RpcException rpcEx && (rpcEx.StatusCode == StatusCode.Unavailable || rpcEx.Status.Detail == "SYSTEM_SYNCING"))
                 SetOfflineState("Синхронизация системы (ORM/DB)...");
             else
@@ -113,23 +112,67 @@ namespace TicTacToeOnline
         {
             if (string.IsNullOrWhiteSpace(txtLogin.Text) || !await EnsureClient()) return;
             _playerId = txtLogin.Text.Trim();
-            try
+
+            for (int attempt = 1; attempt <= 3; attempt++)
             {
-                var res = await _client!.CheckSessionAsync(new CheckRequest { PlayerId = _playerId });
-                if (res.Exists) StartGameSession(_playerId, res.GameId);
-                else { loginPanel.Visible = false; roomPanel.Visible = true; }
+                try
+                {
+                    var res = await _client!.CheckSessionAsync(new CheckRequest { PlayerId = _playerId });
+                    if (res.Exists) StartGameSession(_playerId, res.GameId, true);
+                    else { loginPanel.Visible = false; roomPanel.Visible = true; }
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    if (ex is RpcException rpcEx && rpcEx.Status.Detail == "SYSTEM_SYNCING" && attempt < 3)
+                    {
+                        lblStatus.Text = $"Синхронизация системы... (попытка {attempt})";
+                        lblStatus.BackColor = Color.LightSkyBlue;
+                        await Task.Delay(1500);
+                        continue;
+                    }
+                    HandleException(ex);
+                    break;
+                }
             }
-            catch (Exception ex) { HandleException(ex); }
         }
 
-        private async void StartGameSession(string nick, string rid)
+        private async void StartGameSession(string nick, string rid, bool isJoin)
         {
             if (!await EnsureClient()) return;
             _gameId = rid;
             try
             {
-                var r = await _client!.CreateGameAsync(new CreateRequest { PlayerId = $"{nick}|{rid}" });
-                roomPanel.Visible = false; loginPanel.Visible = false; headerPanel.Visible = true; flowLayoutPanel1.Visible = true;
+                var r = await _client!.CreateGameAsync(new CreateRequest { 
+                    PlayerId = $"{nick}|{rid}",
+                    IsJoinOnly = isJoin 
+                });
+
+                // ОБРАБОТКА ОШИБОК ЧЕРЕЗ СТАТУСНУЮ СТРОКУ
+                if (!string.IsNullOrEmpty(r.Error))
+                {
+                    if (r.Error == "ROOM_NOT_FOUND")
+                    {
+                        lblStatus.Text = $"ОШИБКА: Комната #{rid} не найдена!";
+                        lblStatus.BackColor = Color.LightCoral;
+                    }
+                    else if (r.Error == "ROOM_FULL")
+                    {
+                        lblStatus.Text = $"ОШИБКА: В комнате #{rid} нет мест!";
+                        lblStatus.BackColor = Color.LightCoral;
+                    }
+                    else
+                    {
+                        lblStatus.Text = "ОШИБКА: " + r.Error;
+                        lblStatus.BackColor = Color.LightCoral;
+                    }
+                    return;
+                }
+
+                roomPanel.Visible = false; 
+                loginPanel.Visible = false; 
+                headerPanel.Visible = true; 
+                flowLayoutPanel1.Visible = true;
                 UpdateUI(r);
                 _timer.Start();
             }
@@ -204,9 +247,23 @@ namespace TicTacToeOnline
             return new string(sub);
         }
 
-        private void OnRulesClick() => MessageBox.Show("Ultimate Tic-Tac-Toe Rules...", "Правила");
-        private void OnCreateRoom() { StartGameSession(_playerId, new Random().Next(1000, 9999).ToString()); }
-        private void OnJoinRoom() { if (txtRoomId.Text.Length == 4) StartGameSession(_playerId, txtRoomId.Text); }
+        private void OnRulesClick()
+        {
+            string rulesText = 
+                "Ultimate Tic-Tac-Toe (Мега Крестики-Нолики)\n\n" +
+                "1. Поле: Состоит из 9 малых полей 3x3, объединенных в одну большую сетку.\n\n" +
+                "2. Начало: Первый игрок может сделать ход в любую из 81 клетки.\n\n" +
+                "3. Направление хода: Ваш выбор клетки в малом поле определяет, в каком малом поле должен ходить противник.\n" +
+                "   (Например: если вы пошли в правый верхний угол малого поля, противник ОБЯЗАН ходить в малом поле, которое находится в правом верхнем углу большой сетки).\n\n" +
+                "4. Свободный ход: Если малая доска, в которую вас отправили, уже выиграна кем-то или полностью заполнена, вы получаете «свободный ход» и можете играть в любой доступной клетке на любой другой доске.\n\n" +
+                "5. Победа в малом поле: Доска считается захваченной игроком, если он собрал 3 в ряд в пределах этого поля.\n\n" +
+                "6. Победа в игре: Цель — захватить три малых поля, которые образуют линию (горизонталь, вертикаль или диагональ) в масштабе большой сетки.";
+
+            MessageBox.Show(rulesText, "Правила игры Ultimate Tic-Tac-Toe", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        private void OnCreateRoom() { StartGameSession(_playerId, new Random().Next(1000, 9999).ToString(), false); }
+        private void OnJoinRoom() { if (txtRoomId.Text.Length == 4) StartGameSession(_playerId, txtRoomId.Text, true); }
         private async void OnResetGame() { try { var r = await _client!.ResetGameAsync(new StateRequest { GameId = _gameId!, PlayerId = _playerId }); UpdateUI(r); } catch (Exception ex) { HandleException(ex); } }
         private async void OnExitRoom() { try { if (await EnsureClient()) await _client!.ExitGameAsync(new ExitRequest { GameId = _gameId!, PlayerId = _playerId }); } catch { } Application.Restart(); }
         protected override void OnFormClosing(FormClosingEventArgs e) { _cts.Cancel(); base.OnFormClosing(e); }
